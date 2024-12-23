@@ -2,20 +2,24 @@ from flask import Flask, request, jsonify
 import requests
 import os
 from dotenv import load_dotenv
-import env
-
 
 app = Flask(__name__)
 
-#loads env file
-dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-load_dotenv(dotenv_path=dotenv_path)
-print("Environment loaded.")
+# add absolute path resolution
+basedir = os.path.abspath(os.path.dirname(__file__))
+env_path = os.path.join(basedir, '.env')
 
-SPOTIFY_TOKEN = os.getenv("SPOTIFY_TOKEN")
-print("SPOTIFY_TOKEN:", os.getenv("SPOTIFY_TOKEN"))
-print("SPOTIFY_ID:", os.getenv("SPOTIFY_ID"))
-print("SPOTIFY_SECRET:", os.getenv("SPOTIFY_SECRET"))
+print(f"Looking for .env file at: {env_path}")
+print(f"File exists: {os.path.exists(env_path)}")
+
+# load with explicit path
+load_dotenv(env_path)
+
+# debug
+print("Environment variables loaded. Checking values:")
+print(f"SPOTIFY_TOKEN exists: {'SPOTIFY_TOKEN' in os.environ}")
+print(f"SPOTIFY_ID exists: {'SPOTIFY_ID' in os.environ}")
+print(f"SPOTIFY_SECRET exists: {'SPOTIFY_SECRET' in os.environ}")
 
 
 
