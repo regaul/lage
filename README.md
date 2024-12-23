@@ -1,4 +1,4 @@
-hello! this is the first version of the project. The main intentions with 
+hello! this is the first version of the project. the main intentions with 
 this version are: 
 
 - a simple, user friendly UI. the objective of the website should be very 
