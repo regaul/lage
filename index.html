@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<script src="script.js"></script>
+<html>
+<head>
+    <style>
+        
+        body { 
+        background: #000000; 
+        color: rgb(0, 191, 255);
+        font-family: "Courier New", Courier, monospace; }
+        .search-container {
+            text-align: center; 
+            padding: 20vh 0;
+            font-family: "Courier New", Courier, monospace;}
+        .search-bar { 
+            width: 60%;
+            padding: 10px;
+            border: none;
+            border-bottom: 2px solid #0d4755;
+            background: transparent;
+            color: white;
+            font-family: "Courier New", Courier, monospace;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .song {
+            padding: 10px;
+            transition: background 0.3s;
+        }
+        .song:hover {
+            background: #330033;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="search-container">
+        <input type="text" class="search-bar" placeholder="Enter a song...">
+        <div class="results"></div>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>
