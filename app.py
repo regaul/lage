@@ -2,101 +2,184 @@ from flask import Flask, request, jsonify, render_template
 import requests
 import os
 import base64
+import time
 from dotenv import load_dotenv
 
 app = Flask(__name__, template_folder='ui')
 
-# current env setup
+token_info = {'token': None, 'expiry': None}
+
 basedir = os.path.abspath(os.path.dirname(__file__))
 env_path = os.path.join(basedir, '.env')
-
-print(f"Looking for .env file at: {env_path}")
-print(f"File exists: {os.path.exists(env_path)}")
 load_dotenv(env_path)
 
-print("Environment variables loaded. Checking values:")
-print(f"SPOTIFY_ID exists: {'SPOTIFY_ID' in os.environ}")
-print(f"SPOTIFY_SECRET exists: {'SPOTIFY_SECRET' in os.environ}")
-
-#generates token
-def get_spotify_token():
-    auth_url = 'https://accounts.spotify.com/api/token'
-    
-    # credentials
-    client_id = os.getenv('SPOTIFY_ID')
-    client_secret = os.getenv('SPOTIFY_SECRET')
-    
-    print(f"attempting token generation with:")
-    print(f"Client ID present: {bool(client_id)}")
-    print(f"Client Secret present: {bool(client_secret)}")
+def get_tidal_token():
+    if token_info['token'] and token_info['expiry'] and token_info['expiry'] > time.time():
+        return token_info['token']
+        
+    auth_url = 'https://auth.tidal.com/v1/oauth2/token'
+    client_id = os.getenv('TIDAL_ID')
+    client_secret = os.getenv('TIDAL_SECRET')
     
     if not client_id or not client_secret:
-        print("Missing credentials")
+        print("Missing TIDAL credentials")
         return None
-        
-    auth_string = f"{client_id}:{client_secret}"
-    auth_header = base64.b64encode(auth_string.encode()).decode('utf-8')
     
     headers = {
-        'Authorization': f'Basic {auth_header}',
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/x-www-form-urlencoded',
     }
-    data = {'grant_type': 'client_credentials'}
+    
+    data = {
+        'grant_type': 'client_credentials',
+        'client_id': client_id,
+        'client_secret': client_secret
+    }
     
     try:
         response = requests.post(auth_url, headers=headers, data=data)
-        print(f"token status: {response.status_code}")
-        print(f"token response body: {response.text}")
+        print(f"Token response: {response.text}")
         
         if response.status_code == 200:
-            return response.json()['access_token']
+            response_data = response.json()
+            token_info['token'] = response_data['access_token']
+            token_info['expiry'] = time.time() + response_data['expires_in']
+            return token_info['token']
         else:
-            print(f"failed to get token: {response.text}")
-            return None
+            print(f"Token request failed with status {response.status_code}: {response.text}")
     except Exception as e:
-        print(f"exception during token request: {str(e)}")
-        return None
+        print(f"Token request failed: {str(e)}")
+    return None
+
+def parse_track_payload(payload):
+    """Parse the track payload from the batch response"""
+    tracks_data = []
+    
+    for track in payload.get('data', []):
+        # Find corresponding artist and album in included data
+        artist_id = track['relationships']['artists']['data'][0]['id']
+        album_id = track['relationships']['albums']['data'][0]['id']
+        
+        artist_name = None
+        album_picture = None
+        
+        for item in payload.get('included', []):
+            if item['type'] == 'artists' and item['id'] == artist_id:
+                artist_name = item['attributes']['name']
+            elif item['type'] == 'albums' and item['id'] == album_id:
+                image_links = item['attributes'].get('imageLinks', [])
+                if image_links:
+                    album_picture = image_links[0]['href']
+        
+        # Get similar track IDs
+        similar_track_ids = [t['id'] for t in track['relationships'].get('similarTracks', {}).get('data', [])]
+        
+        tracks_data.append({
+            'id': track['id'],
+            'title': track['attributes']['title'],
+            'artist': artist_name or 'Unknown Artist',
+            'albumUrl': album_picture,
+            'similarTracks': similar_track_ids[:5]
+        })
+    
+    return tracks_data
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
+@app.route('/search', methods=['POST'])
+def search():
+    token = get_tidal_token()
+    if not token:
+        return jsonify({'error': 'Failed to get TIDAL token'}), 401
+
+    data = request.json
+    query = data.get('query', '')
+    if not query:
+        return jsonify({'error': 'No search query provided'}), 400
+        
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/vnd.tidal.v1+json'
+    }
+
+    search_url = 'https://openapi.tidal.com/v2/searchresults/' + query + "/relationships/tracks"
+    params = {
+        'include': 'tracks',
+        'countryCode': 'US'
+    }
+    
+    try:
+        response = requests.get(search_url, headers=headers, params=params)
+       
+        if response.status_code != 200:
+            return jsonify({'error': 'Search failed'}), response.status_code
+            
+        response_data = response.json()
+        # Get the track IDs from the data array
+        track_ids = [track['id'] for track in response_data.get('data', [])[:5]]
+        
+
+        # Get detailed track info in one request using ISRCs
+        tracks_url = 'https://openapi.tidal.com/v2/tracks'
+        tracks_params = {
+            'filter[id]': ','.join(track_ids),
+            'countryCode': 'US',
+            'include': ['artists', 'albums', 'similarTracks']
+        }
+        
+        tracks_response = requests.get(tracks_url, headers=headers, params=tracks_params)
+        if tracks_response.status_code != 200:
+            return jsonify({'error': 'Failed to get track details'}), tracks_response.status_code
+            
+        tracks_data = tracks_response.json()
+        tracks = parse_track_payload(tracks_data)
+        return jsonify({'tracks': tracks})
+        
+        # Get the full track data for each ID
+       
+    except Exception as e:
+        print(f"Search failed: {str(e)}")
+        return jsonify({'error': 'Search failed'}), 500
+
 @app.route('/recommendations', methods=['POST'])
 def get_recommendations():
-    print("\n=== Starting new request ===")
-    print("Received query:", request.json)
+    token = get_tidal_token()
+    if not token:
+        return jsonify({'error': 'Failed to get TIDAL token'}), 401
+
+    data = request.json
+    track_id = data.get('trackId')
+    similarTracks = data.get('similarTracks')
+    if not track_id:
+        return jsonify({'error': 'No track ID provided'}), 400
     
-    query = request.json.get('query')
-    print("\n=== Getting spotify token ===")
-    token = get_spotify_token()
-    print("Token received:", token[:30] + "..." if token else "No token received")
-    
-    headers = {'Authorization': f'Bearer {token}'}
-    search_url = f'https://api.spotify.com/v1/search?q={query}&type=track&limit=5'
-    print("\n=== Making spotify request ===")
-    print("URL:", search_url)
-    print("Headers:", {k: v[:30] + "..." if k == "Authorization" else v for k, v in headers.items()})
-    
-    response = requests.get(search_url, headers=headers)
-    print("\n=== Spotify response ===")
-    print("Status Code:", response.status_code)
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+
     try:
-        print("Response Body:", response.json())
+        recs = []
+         # Get detailed track info in one request using ISRCs
+        tracks_url = 'https://openapi.tidal.com/v2/tracks'
+        tracks_params = {
+            'filter[id]': ','.join(similarTracks),
+            'countryCode': 'US',
+            'include': ['artists', 'albums', 'similarTracks']
+        }
+        
+        tracks_response = requests.get(tracks_url, headers=headers, params=tracks_params)
+        if tracks_response.status_code != 200:
+            return jsonify({'error': 'Failed to get track details'}), tracks_response.status_code
+            
+        tracks_data = tracks_response.json()
+        recs = parse_track_payload(tracks_data)
+        return jsonify({'recommendations': recs})
+
     except Exception as e:
-        print("Error parsing response:", str(e))
-    
-    tracks = response.json().get('tracks', {}).get('items', [])
-    
-    return jsonify({
-        'recommendations': [
-            {
-                'title': track['name'],
-                'artist': track['artists'][0]['name'],
-                'url': track['external_urls']['spotify']
-            }
-            for track in tracks
-        ]
-    })
+        print(f"Recommendations failed: {str(e)}")
+        return jsonify({'error': 'Failed to get recommendations'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
